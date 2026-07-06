@@ -1173,6 +1173,48 @@
 
   <!-- ==================== CLIENT SIDE JAVASCRIPT ==================== -->
   <script>
+    // --- API Configuration (ทางเลือกที่ 2: รันแยกเว็บหน้าบ้านบน GitHub Pages) ---
+    // ก๊อปปี้ URL เว็บแอปของคุณที่ได้จากการ Deploy ใน Google Apps Script (ลงท้ายด้วย /exec) มาใส่ตรงนี้
+    var GAS_WEB_APP_URL = "https://script.google.com/macros/s/xxxx/exec"; 
+
+    /**
+     * ฟังก์ชันเรียกใช้ API ข้อมูลส่งข้ามโดเมนไปยัง Google Apps Script
+     */
+    function callAPI(action, data, onSuccess, onFailure) {
+      if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.indexOf("xxxx") !== -1) {
+        showLoading(false);
+        alert("กรุณาตั้งค่าลิงก์ URL เว็บแอป Google Apps Script (GAS_WEB_APP_URL) ในส่วนหัวของสคริปต์ในไฟล์ index.html ก่อนใช้งานครับ");
+        return;
+      }
+
+      var payload = Object.assign({ action: action }, data);
+
+      fetch(GAS_WEB_APP_URL, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8" // ใช้ text/plain เพื่อเลี่ยง CORS Preflight OPTIONS ในระบบ Apps Script
+        },
+        body: JSON.stringify(payload)
+      })
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error("ระบบเชื่อมต่อเซิร์ฟเวอร์ขัดข้อง (HTTP " + response.status + ")");
+        }
+        return response.json();
+      })
+      .then(function(json) {
+        if (json.success) {
+          if (onSuccess) onSuccess(json.data);
+        } else {
+          if (onFailure) onFailure(new Error(json.error || "เกิดข้อผิดพลาดไม่ทราบสาเหตุ"));
+        }
+      })
+      .catch(function(err) {
+        if (onFailure) onFailure(err);
+      });
+    }
+
     // --- Global Application State ---
     var state = {
       currentUser: null,
@@ -1251,9 +1293,9 @@
       showLoading(true);
       errBanner.classList.remove("active");
 
-      // เรียก GAS Backend ผ่าน google.script.run
-      google.script.run
-        .withSuccessHandler(function(user) {
+      // เรียก API ตรวจสอบการเข้าสู่ระบบ
+      callAPI("login", { userId: userId, password: pass }, 
+        function(user) {
           showLoading(false);
           state.currentUser = user;
           localStorage.setItem("government_leave_user", JSON.stringify(user));
@@ -1262,14 +1304,14 @@
           document.getElementById("login-password").value = "";
           
           showAppView();
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           errMsgSpan.innerText = err.message || "เกิดข้อผิดพลาดในการตรวจสอบรหัสผ่าน";
           errBanner.classList.add("active");
           lucide.createIcons();
-        })
-        .login(userId, pass);
+        }
+      );
     }
 
     function handleLogout() {
@@ -1338,8 +1380,8 @@
     // --- API Data Fetching ---
     function fetchLeavesData() {
       showLoading(true);
-      google.script.run
-        .withSuccessHandler(function(leaves) {
+      callAPI("getLeaves", { userId: state.currentUser.id },
+        function(leaves) {
           showLoading(false);
           state.leaves = leaves;
           
@@ -1347,17 +1389,17 @@
           updateStatsAndCharts();
           // อัปเดตตารางประวัติ
           renderLeavesTable();
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           showNotify("ดึงข้อมูลการลาผิดพลาด: " + err.message, "danger");
-        })
-        .getLeaves(state.currentUser.id);
+        }
+      );
     }
 
     function fetchTeachersList() {
-      google.script.run
-        .withSuccessHandler(function(teachers) {
+      callAPI("getUsers", { requesterId: state.currentUser.id },
+        function(teachers) {
           state.teachersList = teachers;
           
           // อัปเดตรายชื่อลงในตัวกรองของแอดมิน/ผอ.
@@ -1373,11 +1415,11 @@
               select.appendChild(opt);
             }
           });
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           console.error("โหลดรายชื่อครูไม่สำเร็จ", err);
-        })
-        .getUsers(state.currentUser.id);
+        }
+      );
     }
 
     // --- Statistics & Charts logic ---
@@ -1820,17 +1862,17 @@
       }
 
       showLoading(true);
-      google.script.run
-        .withSuccessHandler(function() {
+      callAPI("updateLeaveStatus", { leaveId: leaveId, adminId: state.currentUser.id, status: status },
+        function() {
           showLoading(false);
           showNotify("อัปเดตสถานะใบลาสำเร็จแล้ว", "success");
           fetchLeavesData(); // รีเฟรชข้อมูล
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           showNotify("ปรับสถานะล้มเหลว: " + err.message, "danger");
-        })
-        .updateLeaveStatus(leaveId, state.currentUser.id, status);
+        }
+      );
     }
 
     function handleDeleteLeave(leaveId) {
@@ -1839,17 +1881,17 @@
       }
 
       showLoading(true);
-      google.script.run
-        .withSuccessHandler(function() {
+      callAPI("deleteLeave", { leaveId: leaveId, userId: state.currentUser.id },
+        function() {
           showLoading(false);
           showNotify("ลบรายการยื่นใบลาสำเร็จแล้ว", "success");
           fetchLeavesData();
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           showNotify("การลบล้มเหลว: " + err.message, "danger");
-        })
-        .deleteLeave(leaveId, state.currentUser.id);
+        }
+      );
     }
 
     function handleClearAll() {
@@ -1858,17 +1900,17 @@
       }
 
       showLoading(true);
-      google.script.run
-        .withSuccessHandler(function() {
+      callAPI("clearAllLeaves", { adminId: state.currentUser.id },
+        function() {
           showLoading(false);
           showNotify("ล้างข้อมูลประวัติทั้งหมดเรียบร้อยแล้ว", "success");
           fetchLeavesData();
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           showNotify("การล้างข้อมูลล้มเหลว: " + err.message, "danger");
-        })
-        .clearAllLeaves(state.currentUser.id);
+        }
+      );
     }
 
     // --- Modal Leave Form Logics ---
@@ -2049,19 +2091,19 @@
         fileData: state.uploadedFile // ส่ง base64
       };
 
-      google.script.run
-        .withSuccessHandler(function() {
+      callAPI("createLeave", { leaveData: payload },
+        function() {
           showLoading(false);
           closeLeaveModal();
           showNotify("ยื่นใบลาส่งประกอบพิจารณาเรียบร้อยแล้ว", "success");
           fetchLeavesData(); // รีโหลดข้อมูลใหม่
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           errMsgSpan.innerText = err.message || "เกิดข้อผิดพลาดในการส่งข้อมูลใบลา";
           errBanner.classList.add("active");
-        })
-        .createLeave(payload);
+        }
+      );
     }
 
     // --- Modal Change Password Logics ---
@@ -2100,18 +2142,18 @@
 
       showLoading(true);
 
-      google.script.run
-        .withSuccessHandler(function(res) {
+      callAPI("changePassword", { userId: state.currentUser.id, oldPassword: oldPass, newPassword: newPass },
+        function(res) {
           showLoading(false);
           closeChangePasswordModal();
           showNotify(res.message || "เปลี่ยนรหัสผ่านสําเร็จแล้ว", "success");
-        })
-        .withFailureHandler(function(err) {
+        },
+        function(err) {
           showLoading(false);
           errMsgSpan.innerText = err.message || "เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน";
           errBanner.classList.add("active");
-        })
-        .changePassword(state.currentUser.id, oldPass, newPass);
+        }
+      );
     }
 
   </script>
